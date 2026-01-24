@@ -2,8 +2,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const multer = require('multer');
-const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -24,15 +22,23 @@ mongoose.connect(process.env.MONGODB_CONNECTION_STRING, {
 .catch(err => console.error('✗ MongoDB connection error:', err));
 
 // Routes
-const symptomRoutes = require('./routes/symptoms');
+const authRoutes = require('./routes/auth');
 const diseaseRoutes = require('./routes/disease');
 const doctorRoutes = require('./routes/doctors');
+const symptomsRoutes = require('./routes/symptoms');
+const mapsRoutes = require('./routes/maps');
 const chatRoutes = require('./routes/chat');
+const historyRoutes = require('./routes/history');
+const profileRoutes = require('./routes/profile');
 
-app.use('/api/symptoms', symptomRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/disease', diseaseRoutes);
 app.use('/api/doctors', doctorRoutes);
+app.use('/api/symptoms', symptomsRoutes);
+app.use('/api/maps', mapsRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/history', historyRoutes);
+app.use('/api/profile', profileRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -42,4 +48,3 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`✓ Server running on port ${PORT}`);
 });
-

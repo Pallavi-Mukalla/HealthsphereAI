@@ -48,6 +48,7 @@ PORT=5000
 
 ```bash
 mkdir uploads
+touch uploads/.gitkeep
 ```
 
 ### 2.4 Start the Backend Server
@@ -88,9 +89,9 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3.3 Configure Environment Variables
+### 3.3 Configure Environment Variables (Optional)
 
-Create a `.env` file in the `ml_service` directory:
+Create a `.env` file in the `ml_service` directory if you want to train the model:
 
 ```env
 MONGODB_CONNECTION_STRING=mongodb+srv://username:password@cluster.mongodb.net/healthsphere?retryWrites=true&w=majority
@@ -109,7 +110,7 @@ This will:
 - Train a Random Forest classifier
 - Save the model to `ml_service/models/disease_model.pkl`
 
-**Note:** If training data is not available, a sample model will be created.
+**Note:** If training data is not available, the system will use MongoDB mapping and Gemini API as fallbacks.
 
 ## Step 4: Frontend Setup (React)
 
@@ -143,20 +144,25 @@ The frontend will run on `http://localhost:3000` and automatically open in your 
 Ensure your MongoDB Atlas database has the following collections:
 
 1. **symptomtodiseasemapping** - Contains symptom to disease mappings
+   - Schema: `{ symptoms: [String], disease: String }`
+
 2. **doctorslist** - Contains doctor information
+   - Schema: `{ name: String, specialty: String, specialties: [String], location: { lat: Number, lng: Number, address: String }, rating: Number }`
 
 You can verify this in MongoDB Atlas Dashboard → Database → Browse Collections.
+
+**Note:** The application will also create a `symptomhistories` collection automatically to store user symptom history.
 
 ## Step 6: Test the Application
 
 1. Open `http://localhost:3000` in your browser
 2. You should see the HealthSphere AI chatbot interface
 3. Try entering symptoms like: "I have a headache and fever"
-4. The system should:
+4. The system will:
    - Extract symptoms
-   - Predict disease
-   - Determine urgency
-   - Recommend doctors
+   - Predict disease (using ML model → MongoDB → Gemini)
+   - Ask follow-up questions to determine urgency
+   - Recommend top 3 doctors
    - Display results in the chat
 
 ## Troubleshooting
@@ -176,6 +182,10 @@ You can verify this in MongoDB Atlas Dashboard → Database → Browse Collectio
 - Change `PORT` in `backend/.env` to another port (e.g., 5001)
 - Update `REACT_APP_API_URL` in `frontend/.env` accordingly
 
+**Error: "Python not found" (ML Service)**
+- Ensure Python is installed and in your PATH
+- The backend will fallback to MongoDB mapping and Gemini if ML service is unavailable
+
 ### ML Service Issues
 
 **Error: "Python not found"**
@@ -184,7 +194,7 @@ You can verify this in MongoDB Atlas Dashboard → Database → Browse Collectio
 
 **Error: "Model file not found"**
 - Run `python train_model.py` to create the model
-- Or the system will use Gemini API as fallback
+- Or the system will use MongoDB mapping and Gemini API as fallbacks
 
 ### Frontend Issues
 
@@ -198,27 +208,47 @@ You can verify this in MongoDB Atlas Dashboard → Database → Browse Collectio
 - Use Chrome or Edge browser for best support
 - Grant microphone permissions when prompted
 
+**Error: "Location access denied"**
+- The app will work without location, but doctor recommendations won't be sorted by proximity
+- Grant location permissions when prompted
+
 ## Project Structure
 
 ```
 HealthspherAI/
 ├── backend/                # Node.js/Express backend
 │   ├── routes/             # API routes
+│   │   ├── chat.js         # Chat endpoints
+│   │   ├── disease.js      # Disease prediction & urgency
+│   │   ├── doctors.js       # Doctor recommendations
+│   │   └── symptoms.js     # Symptom extraction
 │   ├── models/             # MongoDB models
+│   │   ├── Doctor.js
+│   │   ├── SymptomDiseaseMapping.js
+│   │   └── SymptomHistory.js
 │   ├── services/           # Business logic
+│   │   ├── diseasePredictor.js  # ML + MongoDB + Gemini integration
+│   │   ├── geminiService.js     # Gemini API integration
+│   │   ├── symptomExtractor.js  # Symptom extraction
+│   │   ├── imageProcessor.js    # Image analysis
+│   │   └── voiceProcessor.js    # Voice processing (placeholder)
 │   ├── uploads/            # Uploaded files
 │   ├── server.js           # Main server file
 │   └── .env                # Environment variables
 ├── frontend/               # React frontend
 │   ├── src/
 │   │   ├── components/     # React components
-│   │   └── App.js          # Main app component
+│   │   │   └── Chatbot.js  # Main chatbot component
+│   │   ├── App.js          # Main app component
+│   │   └── index.js        # Entry point
 │   └── .env                # Frontend env vars
 ├── ml_service/             # Python ML service
 │   ├── models/             # Trained ML models
-│   ├── disease_predictor.py
-│   └── train_model.py
-└── SETUP_GUIDE.md          # This file
+│   ├── disease_predictor.py  # ML prediction script
+│   └── train_model.py     # Model training script
+├── SETUP_GUIDE.md          # This file
+├── PROJECT_DOCUMENTATION.md # Project documentation
+└── README.md               # Main README
 ```
 
 ## Development Workflow
@@ -265,11 +295,10 @@ If you encounter issues:
 ## Next Steps
 
 After setup:
-1. Train the ML model with your data
+1. Train the ML model with your data (optional)
 2. Populate MongoDB collections with real data
 3. Customize the UI/UX as needed
 4. Add user authentication if required
 5. Deploy to production
 
 Happy coding! 🚀
-

@@ -31,23 +31,76 @@ body {
   flex-direction: column;
 }
 
+.app-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  color: #fff;
+  font-size: 18px;
+}
+
 .app-header {
-  text-align: center;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 20px;
   padding: 20px;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.app-header-left {
+  flex: 1;
+  min-width: 200px;
+}
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 15px;
 }
 
 .app-header h1 {
-  font-size: 2.5rem;
+  font-size: 2rem;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  margin-bottom: 10px;
+  margin-bottom: 5px;
 }
 
 .app-header p {
   color: #a0a0a0;
-  font-size: 1.1rem;
+  font-size: 1rem;
+}
+
+.login-btn,
+.history-btn {
+  padding: 10px 20px;
+  background: #4CAF50;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.login-btn:hover,
+.history-btn:hover {
+  background: #45a049;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .app-header h1 {
+    font-size: 1.5rem;
+  }
 }
 

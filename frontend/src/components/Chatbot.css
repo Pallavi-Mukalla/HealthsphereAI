@@ -57,6 +57,8 @@
   word-wrap: break-word;
   line-height: 1.6;
   font-size: 15px;
+  min-width: 60px;
+  text-align: left;
 }
 
 .message.user .message-content {

@@ -1,14 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './Chatbot.css';
 import axios from 'axios';
+import { useAuth } from '../context/AuthContext';
+import { getTranslation } from '../utils/translations';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 const Chatbot = () => {
+  const { user } = useAuth();
+  const userLanguage = user?.language || 'en';
+  const t = (key) => getTranslation(key, userLanguage);
+  
   const [messages, setMessages] = useState([
     {
       type: 'bot',
-      text: "Hello! I'm HealthSphere AI, your intelligent health assistant. I can help you analyze symptoms through text, voice, or images. How can I assist you today?",
+      text: t('welcomeMessage'),
       timestamp: new Date()
     }
   ]);
@@ -16,32 +22,69 @@ const Chatbot = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputMode, setInputMode] = useState('text'); // text, voice, image
   const [isRecording, setIsRecording] = useState(false);
+  const [followUpQuestions, setFollowUpQuestions] = useState([]);
+  const [followUpAnswers, setFollowUpAnswers] = useState([]);
+  const [currentContext, setCurrentContext] = useState(null);
+  const [userLocation, setUserLocation] = useState(null);
+
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
 
+  // Update welcome message when language changes (only if it's still the initial message)
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    setMessages(prev => {
+      // Only update if it's still the initial welcome message
+      if (prev.length === 1 && prev[0].type === 'bot') {
+        return [{
+          type: 'bot',
+          text: getTranslation('welcomeMessage', userLanguage),
+          timestamp: new Date()
+        }];
+      }
+      return prev;
+    });
+  }, [userLanguage]);
+
+  useEffect(() => scrollToBottom(), [messages]);
 
   useEffect(() => {
-    // Initialize Web Speech API for voice input
+    // Get user location
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => console.log('Location access denied')
+      );
+    }
+
+    // Initialize voice recognition
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = false;
-      
-      recognitionRef.current.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        setInput(transcript);
+      recognitionRef.current.onresult = e => {
+        setInput(e.results[0][0].transcript);
         setIsRecording(false);
       };
-      
-      recognitionRef.current.onerror = () => {
-        setIsRecording(false);
-      };
+      recognitionRef.current.onerror = () => setIsRecording(false);
     }
+  }, []);
+
+  // Expose function to restore conversation from history
+  useEffect(() => {
+    const handleRestoreConversation = (event) => {
+      const { conversationMessages } = event.detail;
+      if (conversationMessages && Array.isArray(conversationMessages)) {
+        setMessages(conversationMessages);
+        setFollowUpQuestions([]);
+        setFollowUpAnswers([]);
+        setCurrentContext(null);
+      }
+    };
+
+    window.addEventListener('restoreConversation', handleRestoreConversation);
+    return () => window.removeEventListener('restoreConversation', handleRestoreConversation);
   }, []);
 
   const scrollToBottom = () => {
@@ -49,83 +92,149 @@ const Chatbot = () => {
   };
 
   const addMessage = (text, type = 'bot') => {
-    setMessages(prev => [...prev, {
-      type,
-      text,
-      timestamp: new Date()
-    }]);
+    if (!text || typeof text !== 'string') return;
+    setMessages(prev => [...prev, { type, text, timestamp: new Date() }]);
   };
 
-  const handleTextSubmit = async (text) => {
-    if (!text.trim()) return;
+  // --- Display Doctor Recommendations ---
+  const displayDoctorRecommendations = (doctors) => {
+    if (!doctors || doctors.length === 0) return;
 
-    addMessage(text, 'user');
-    setInput('');
-    setIsProcessing(true);
-
-    try {
-      // Step 1: Extract symptoms
-      const symptomRes = await axios.post(`${API_BASE_URL}/api/symptoms/extract-text`, {
-        text
-      });
-
-      const { symptoms, keySymptoms } = symptomRes.data;
-      addMessage(`I've identified ${symptoms.length} symptom(s): ${symptoms.join(', ')}`);
-
-      // Step 2: Predict disease
-      const diseaseRes = await axios.post(`${API_BASE_URL}/api/disease/predict`, {
-        symptoms,
-        keySymptoms
-      });
-
-      const { disease, source } = diseaseRes.data;
-      addMessage(`Based on your symptoms, the predicted condition is: **${disease}** (${source})`);
-
-      // Step 3: Determine urgency
-      const urgencyRes = await axios.post(`${API_BASE_URL}/api/disease/urgency`, {
-        symptoms,
-        disease,
-        userId: 'user_' + Date.now() // In production, use actual user ID
-      });
-
-      const { urgency } = urgencyRes.data;
-      addMessage(`Urgency Level: **${urgency.toUpperCase()}**`);
-
-      // Step 4: Get doctor recommendations
-      const doctorRes = await axios.post(`${API_BASE_URL}/api/doctors/recommend`, {
-        disease,
-        urgency,
-        userLocation: null // In production, get from user
-      });
-
-      const { doctors } = doctorRes.data;
-      if (doctors && doctors.length > 0) {
-        let doctorMsg = `**Recommended Doctors:**\n\n`;
-        doctors.forEach((doc, idx) => {
-          doctorMsg += `${idx + 1}. **${doc.name}** - ${doc.specialty}\n`;
-          if (doc.rating) doctorMsg += `   Rating: ${doc.rating}⭐\n`;
-          if (doc.location) doctorMsg += `   Location: ${doc.location}\n`;
-          doctorMsg += `\n`;
-        });
-        addMessage(doctorMsg);
+    addMessage(`🏥 ${t('recommendedDoctors')}:`);
+    
+    doctors.forEach((doctor, index) => {
+      let doctorInfo = `\n${index + 1}. ${doctor.name}`;
+      doctorInfo += `\n   ${t('specialty')}: ${doctor.specialty}`;
+      doctorInfo += `\n   ${t('hospitalClinic')}: ${doctor.hospital || t('notSpecified')}`;
+      
+      if (doctor.location) {
+        const address = [doctor.location.address, doctor.location.city, doctor.location.state]
+          .filter(Boolean).join(', ');
+        if (address) {
+          doctorInfo += `\n   ${t('location')}: ${address}`;
+        }
+      }
+      
+      if (doctor.distance !== null && doctor.distance !== undefined) {
+        doctorInfo += `\n   ${t('distance')}: ${doctor.distance.toFixed(1)} km`;
+      }
+      
+      if (doctor.contact && doctor.contact.phone && doctor.contact.phone !== 'Not available') {
+        doctorInfo += `\n   ${t('phone')}: ${doctor.contact.phone}`;
       }
 
-      // Step 5: Summary
-      const summary = `**Summary:**\n\n**Symptoms:** ${symptoms.join(', ')}\n**Disease:** ${disease}\n**Urgency:** ${urgency.toUpperCase()}\n**Doctors Recommended:** ${doctors?.length || 0}`;
-      addMessage(summary);
+      addMessage(doctorInfo);
 
-    } catch (error) {
-      console.error('Error processing request:', error);
-      const errorMessage = error.response?.data?.error || error.message || 'Unknown error';
-      addMessage(`I apologize, but I encountered an error: ${errorMessage}. Please try again or check the console for details.`);
+      // Add directions link if location available
+      if (userLocation && doctor.location && (doctor.location.lat && doctor.location.lng)) {
+        const directionsUrl = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${doctor.location.lat},${doctor.location.lng}`;
+        addMessage(`   📍 ${t('getDirections')}: ${directionsUrl}`);
+      } else if (userLocation && doctor.location && doctor.location.address) {
+        const directionsUrl = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${encodeURIComponent(doctor.location.address)}`;
+        addMessage(`   📍 ${t('getDirections')}: ${directionsUrl}`);
+      }
+    });
+  };
+
+  // --- Handle Text / Voice Input ---
+  const handleTextSubmit = async (text) => {
+    if (!text.trim()) return;
+    addMessage(text, 'user');
+    setIsProcessing(true);
+  
+    try {
+      const res = await axios.post(`${API_BASE_URL}/api/disease/diagnose`, { text, userLocation });
+      const { finalDisease, explanation, followUpQuestions: questions = [] } = res.data;
+
+      // Flow: Initial Disease Diagnosis -> Follow-up Questions
+      // Show initial disease explanation
+      if (explanation) addMessage(explanation);
+      else if (finalDisease) addMessage(`${t('initialDiagnosis')}: ${finalDisease}`);
+
+      // Handle follow-up questions (doctors and urgency will come after answers)
+      if (questions.length > 0) {
+        setFollowUpQuestions(questions);
+        setCurrentContext({ text, initialDisease: finalDisease, symptoms: [], originalInput: text });
+        addMessage(questions[0]);
+      }
+
+    } catch (err) {
+      console.error(err);
+      addMessage(t('errorProcessingSymptoms'));
     } finally {
       setIsProcessing(false);
     }
   };
 
+  // --- Handle follow-up answers ---
+  const handleFollowUpAnswer = async (answer) => {
+    const newAnswers = [...followUpAnswers, answer];
+    setFollowUpAnswers(newAnswers);
+    addMessage(answer, 'user');
+
+    if (newAnswers.length >= followUpQuestions.length) {
+      setIsProcessing(true);
+
+      try {
+        const requestBody = {
+          text: currentContext?.text,
+          symptoms: currentContext?.symptoms || [],
+          followUpAnswers: newAnswers,
+          initialDisease: currentContext?.initialDisease,
+          originalInput: currentContext?.originalInput || currentContext?.text,
+          followUpQuestions: followUpQuestions,
+          userLocation
+        };
+
+        const res = await axios.post(`${API_BASE_URL}/api/disease/diagnose`, requestBody);
+
+        const { finalDisease, explanation, urgencySentence, diseaseChanged, changeReason, recommendedDoctors = [] } = res.data;
+
+        // Flow: Final Disease Diagnosis -> Urgency -> Doctor Recommendations
+        
+        // Show disease change notification if applicable
+        if (diseaseChanged && currentContext?.initialDisease) {
+          addMessage(`⚠️ ${t('diagnosisUpdated')}: ${t('diseaseChangedMessage')}`);
+          if (changeReason) {
+            addMessage(`${t('reason')}: ${changeReason}`);
+          }
+        }
+
+        // Step 1: Show final disease & explanation
+        if (explanation) addMessage(explanation);
+        else if (finalDisease) addMessage(`${t('finalDiagnosis')}: ${finalDisease}`);
+
+        // Step 2: Show urgency
+        if (urgencySentence) {
+          addMessage(`\n⚠️ ${t('urgencyLevel')}:\n${urgencySentence}`);
+        }
+
+        // Step 3: Show doctor recommendations
+        if (recommendedDoctors && recommendedDoctors.length > 0) {
+          displayDoctorRecommendations(recommendedDoctors);
+        }
+
+      } catch (err) {
+        console.error(err);
+        addMessage(t('errorDeterminingDiagnosis'));
+      } finally {
+        setIsProcessing(false);
+        // Clear follow-up state after final evaluation
+        setFollowUpAnswers([]);
+        setFollowUpQuestions([]);
+        setCurrentContext(null);
+      }
+    } else {
+      // Ask next follow-up question
+      addMessage(followUpQuestions[newAnswers.length]);
+    }
+  };
+
+  // --- Handle Image Upload ---
   const handleImageUpload = async (file) => {
+    if (!file) return;
+      addMessage(t('uploadingImage'), 'user');
     setIsProcessing(true);
-    addMessage(`Analyzing image...`, 'user');
 
     try {
       const formData = new FormData();
@@ -135,84 +244,142 @@ const Chatbot = () => {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      const { analysis, disease, symptoms } = res.data;
-      addMessage(`Image analysis: ${analysis}`);
-      addMessage(`Identified symptoms: ${symptoms.join(', ')}`);
-      addMessage(`Predicted condition: **${disease}**`);
+      const symptoms = res.data?.symptoms || [];
+      const disease = res.data?.disease || 'Unknown';
+      const analysis = res.data?.analysis || '';
 
-      // Continue with urgency and doctor recommendation
-      const urgencyRes = await axios.post(`${API_BASE_URL}/api/disease/urgency`, {
-        symptoms,
-        disease,
-        imageAnalysis: analysis
+      if (analysis) addMessage(`${t('imageAnalysis')}: ${analysis}`);
+      if (symptoms.length) addMessage(`${t('identifiedSymptoms')}: ${symptoms.join(', ')}`);
+      addMessage(`${t('initialPredictedCondition')}: ${disease}`);
+
+      // Call backend to get follow-ups and urgency (same flow as text input)
+      const diagnosis = await axios.post(`${API_BASE_URL}/api/disease/diagnose`, { 
+        symptoms, 
+        userLocation 
       });
+      
+      const { finalDisease, explanation, followUpQuestions: questions = [], urgencySentence, recommendedDoctors = [] } = diagnosis.data;
 
-      const { urgency } = urgencyRes.data;
-      addMessage(`Urgency Level: **${urgency.toUpperCase()}**`);
+      // Show initial disease explanation
+      if (explanation) addMessage(explanation);
+      else if (finalDisease) addMessage(`${t('initialDiagnosis')}: ${finalDisease}`);
 
-      const doctorRes = await axios.post(`${API_BASE_URL}/api/doctors/recommend`, {
-        disease,
-        urgency
-      });
+      // Show urgency
+      if (urgencySentence) addMessage(urgencySentence);
 
-      const { doctors } = doctorRes.data;
-      if (doctors && doctors.length > 0) {
-        let doctorMsg = `**Recommended Doctors:**\n\n`;
-        doctors.forEach((doc, idx) => {
-          doctorMsg += `${idx + 1}. **${doc.name}** - ${doc.specialty}\n`;
-          if (doc.rating) doctorMsg += `   Rating: ${doc.rating}⭐\n`;
-          doctorMsg += `\n`;
-        });
-        addMessage(doctorMsg);
+      // Show doctor recommendations
+      if (recommendedDoctors && recommendedDoctors.length > 0) {
+        displayDoctorRecommendations(recommendedDoctors);
       }
 
-    } catch (error) {
-      console.error('Error processing image:', error);
-      addMessage('Error processing image. Please try again.');
+      // Handle follow-up questions (same as text input)
+      if (questions.length > 0) {
+        setFollowUpQuestions(questions);
+        setCurrentContext({ symptoms, initialDisease: finalDisease, text: null, originalInput: `Image analysis: ${analysis}. Symptoms: ${symptoms.join(', ')}` });
+        addMessage(questions[0]);
+      }
+
+    } catch (err) {
+      console.error(err);
+      addMessage(t('errorProcessingImage'));
     } finally {
       setIsProcessing(false);
     }
   };
 
+  // --- Voice Controls ---
   const handleVoiceStart = () => {
     if (recognitionRef.current) {
       recognitionRef.current.start();
       setIsRecording(true);
     } else {
-      addMessage('Voice recognition is not supported in your browser.');
+      addMessage('Voice recognition not supported in this browser.');
     }
   };
-
   const handleVoiceStop = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
+    recognitionRef.current?.stop();
+    setIsRecording(false);
+  };
+
+  // Handle generic chat questions (personalized assistant)
+  const handleChatQuestion = async (question) => {
+    if (!user) {
+      addMessage(t('pleaseLogin'));
+      return;
+    }
+
+    setIsProcessing(true);
+    addMessage(question, 'user');
+
+    try {
+      const res = await axios.post(`${API_BASE_URL}/api/chat/ask`, { question });
+      addMessage(res.data.answer);
+    } catch (err) {
+      console.error(err);
+      addMessage(t('errorProcessing'));
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (input.trim() && !isProcessing) {
-      handleTextSubmit(input);
+    if (!input.trim() || isProcessing) return;
+
+    // Check if it's a follow-up question or a general chat question
+    if (followUpQuestions.length > 0) {
+      handleFollowUpAnswer(input.trim());
+    } else {
+      // Check if input looks like a symptom (contains medical keywords) or a general question
+      const medicalKeywords = ['pain', 'fever', 'headache', 'symptom', 'disease', 'sick', 'ache', 'hurt', 'cough', 'nausea', 'vomit', 'rash', 'swelling'];
+      const isMedicalQuery = medicalKeywords.some(keyword => 
+        input.toLowerCase().includes(keyword)
+      );
+      
+      if (isMedicalQuery) {
+        handleTextSubmit(input.trim());
+      } else {
+        // General chat question
+        handleChatQuestion(input.trim());
+      }
     }
+
+    setInput('');
   };
 
   return (
     <div className="chatbot-container">
-      <div className="chatbot-messages" ref={messagesEndRef}>
+      <div className="chatbot-messages">
         {messages.map((msg, idx) => (
           <div key={idx} className={`message ${msg.type}`}>
             <div className="message-content">
-              {msg.text.split('\n').map((line, i) => (
-                <React.Fragment key={i}>
-                  {line.startsWith('**') && line.endsWith('**') ? (
-                    <strong>{line.slice(2, -2)}</strong>
-                  ) : (
-                    line
-                  )}
-                  {i < msg.text.split('\n').length - 1 && <br />}
-                </React.Fragment>
-              ))}
+              {String(msg.text).split('\n').map((line, i) => {
+                // Check if line contains a URL
+                const urlRegex = /(https?:\/\/[^\s]+)/g;
+                const parts = line.split(urlRegex);
+                
+                return (
+                  <React.Fragment key={i}>
+                    {parts.map((part, j) => {
+                      if (urlRegex.test(part)) {
+                        return (
+                          <a 
+                            key={j} 
+                            href={part} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            style={{ color: '#4CAF50', textDecoration: 'underline' }}
+                          >
+                            {t('getDirections')}
+                          </a>
+                        );
+                      }
+                      return <span key={j}>{part}</span>;
+                    })}
+                    {i < msg.text.split('\n').length - 1 && <br />}
+                  </React.Fragment>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -230,30 +397,9 @@ const Chatbot = () => {
 
       <div className="chatbot-input-container">
         <div className="input-modes">
-          <button
-            className={`mode-btn ${inputMode === 'text' ? 'active' : ''}`}
-            onClick={() => setInputMode('text')}
-            title="Text Input"
-          >
-            📝
-          </button>
-          <button
-            className={`mode-btn ${inputMode === 'voice' ? 'active' : ''}`}
-            onClick={() => setInputMode('voice')}
-            title="Voice Input"
-          >
-            🎤
-          </button>
-          <button
-            className={`mode-btn ${inputMode === 'image' ? 'active' : ''}`}
-            onClick={() => {
-              setInputMode('image');
-              fileInputRef.current?.click();
-            }}
-            title="Image Input"
-          >
-            📷
-          </button>
+          <button className={`mode-btn ${inputMode === 'text' ? 'active' : ''}`} onClick={() => setInputMode('text')}>📝</button>
+          <button className={`mode-btn ${inputMode === 'voice' ? 'active' : ''}`} onClick={() => setInputMode('voice')}>🎤</button>
+          <button className={`mode-btn ${inputMode === 'image' ? 'active' : ''}`} onClick={() => { setInputMode('image'); fileInputRef.current?.click(); }}>📷</button>
         </div>
 
         {inputMode === 'text' && (
@@ -261,50 +407,27 @@ const Chatbot = () => {
             <input
               type="text"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Describe your symptoms..."
+              onChange={e => setInput(e.target.value)}
+              placeholder={followUpQuestions.length > 0 ? t('answerQuestion') : t('askQuestion')}
               disabled={isProcessing}
               className="chatbot-input"
             />
-            <button type="submit" disabled={isProcessing || !input.trim()} className="send-btn">
-              Send
-            </button>
+            <button type="submit" disabled={isProcessing || !input.trim()} className="send-btn">{t('send')}</button>
           </form>
         )}
 
         {inputMode === 'voice' && (
           <div className="voice-controls">
-            <button
-              onClick={isRecording ? handleVoiceStop : handleVoiceStart}
-              className={`voice-btn ${isRecording ? 'recording' : ''}`}
-              disabled={isProcessing}
-            >
+            <button onClick={isRecording ? handleVoiceStop : handleVoiceStart} className={`voice-btn ${isRecording ? 'recording' : ''}`} disabled={isProcessing}>
               {isRecording ? '⏹️ Stop' : '🎤 Start Recording'}
             </button>
-            {input && (
-              <button
-                onClick={() => handleTextSubmit(input)}
-                className="send-btn"
-                disabled={isProcessing}
-              >
-                Send
-              </button>
-            )}
+            {input && <button onClick={handleSubmit} className="send-btn" disabled={isProcessing}>{t('send')}</button>}
           </div>
         )}
 
         {inputMode === 'image' && (
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              if (e.target.files[0]) {
-                handleImageUpload(e.target.files[0]);
-              }
-            }}
-            style={{ display: 'none' }}
-          />
+          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }}
+            onChange={e => handleImageUpload(e.target.files[0])} />
         )}
       </div>
     </div>
@@ -312,4 +435,3 @@ const Chatbot = () => {
 };
 
 export default Chatbot;
-

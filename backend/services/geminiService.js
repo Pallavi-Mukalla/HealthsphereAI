@@ -1,128 +1,163 @@
-const axios = require('axios');
-require('dotenv').config();
+const apiKeyManager = require('./apiKeyManager');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_API_URL = `https://generativeai.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
-const GEMINI_VISION_API_URL = `https://generativeai.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key=${GEMINI_API_KEY}`;
+const MODEL = 'gemini-2.5-flash';
 
+/* ---------------- TEXT CLEANING UTILITY ---------------- */
+function cleanMarkdown(text) {
+  if (!text || typeof text !== 'string') return text;
+  
+  return text
+    // Remove markdown bold/italic
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    // Remove markdown headers
+    .replace(/^#{1,6}\s+/gm, '')
+    // Remove markdown links but keep text
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+    // Remove markdown code blocks
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`([^`]+)`/g, '$1')
+    // Remove markdown lists markers but keep content
+    .replace(/^[\s]*[-*+]\s+/gm, '')
+    .replace(/^[\s]*\d+\.\s+/gm, '')
+    // Remove extra whitespace
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Core function to call Gemini API with automatic key rotation and retry
+ */
+async function callGemini(prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL}:generateContent`;
+
+  try {
+    const res = await apiKeyManager.makeRequest(
+      url,
+      { contents: [{ parts: [{ text: prompt }] }] },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    const rawText = res.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+    return rawText ? cleanMarkdown(rawText) : null;
+  } catch (err) {
+    console.error('Gemini API error:', err.response?.data || err.message);
+    return null;
+  }
+}
+
+/**
+ * Analyze text with Gemini (used by symptomExtractor)
+ */
 async function analyzeWithGemini(prompt) {
-  if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not set');
-  }
-
-  try {
-    const response = await axios.post(GEMINI_API_URL, {
-      contents: [{
-        parts: [{
-          text: prompt
-        }]
-      }]
-    }, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const text = response.data.candidates[0]?.content?.parts[0]?.text;
-    return text ? text.trim() : null;
-  } catch (error) {
-    console.error('Gemini API error:', error.response?.data || error.message);
-    throw error;
-  }
+  return callGemini(prompt);
 }
 
-async function analyzeImageWithGemini(imageBase64, prompt = 'Identify any medical symptoms or conditions visible in this image. Return a detailed analysis.') {
-  if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not set');
-  }
+/**
+ * Analyze image with Gemini Vision API
+ */
+async function analyzeImageWithGemini(imageBase64, prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL}:generateContent`;
 
   try {
-    const response = await axios.post(GEMINI_VISION_API_URL, {
-      contents: [{
-        parts: [
-          { text: prompt },
-          {
-            inline_data: {
-              mime_type: 'image/jpeg',
-              data: imageBase64
+    const res = await apiKeyManager.makeRequest(
+      url,
+      {
+        contents: [{
+          parts: [
+            {
+              text: prompt
+            },
+            {
+              inline_data: {
+                mime_type: 'image/jpeg',
+                data: imageBase64
+              }
             }
-          }
-        ]
-      }]
-    }, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
+          ]
+        }]
+      },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
 
-    const text = response.data.candidates[0]?.content?.parts[0]?.text;
-    return text ? text.trim() : null;
-  } catch (error) {
-    console.error('Gemini Vision API error:', error.response?.data || error.message);
-    throw error;
+    const rawText = res.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+    return rawText ? cleanMarkdown(rawText) : null;
+  } catch (err) {
+    console.error('Gemini Vision API error:', err.response?.data || err.message);
+    return null;
   }
 }
 
-async function chatWithGemini(message, context = {}) {
-  const contextPrompt = context.disease 
-    ? `Context: User has symptoms: ${context.symptoms?.join(', ') || 'unknown'}, predicted disease: ${context.disease}, urgency: ${context.urgency || 'unknown'}. `
-    : '';
-  
-  const prompt = `${contextPrompt}User message: ${message}\n\nRespond naturally and helpfully as a medical assistant chatbot.`;
-  
-  return await analyzeWithGemini(prompt);
+// Predict disease with Gemini
+async function predictDiseaseWithGemini(symptoms) {
+  return callGemini(
+    `You are a medical AI.
+Symptoms: ${symptoms.join(', ')}.
+
+Return ONLY the most likely disease name as plain text. NO markdown, NO asterisks, NO symbols, NO formatting - just the disease name.`
+  );
 }
 
-async function determineUrgency(symptoms, disease) {
-  const prompt = `Based on these symptoms: ${symptoms.join(', ')}, and the disease: ${disease}, determine the urgency level. 
-Return only one word: "low", "medium", "high", or "critical". Consider:
-- low: mild symptoms, can wait for routine appointment
-- medium: moderate symptoms, should see doctor within 24-48 hours
-- high: serious symptoms, should see doctor soon
-- critical: emergency symptoms, immediate medical attention needed
+// Get disease details in plain text
+async function getDiseaseDetails(disease) {
+  return callGemini(
+    `Provide medical information about ${disease} in plain text.
 
-Return only the urgency level word, nothing else.`;
+Return exactly like this:
+Description:
+Symptoms:
+Causes:
 
-  const response = await analyzeWithGemini(prompt);
-  const urgency = response?.toLowerCase().trim();
-  
-  if (['low', 'medium', 'high', 'critical'].includes(urgency)) {
-    return urgency;
-  }
-  
-  return 'medium'; // Default
+CRITICAL: Use ONLY plain text. NO markdown, NO asterisks (*), NO bold/italic, NO bullet points, NO symbols. Write in clear, simple sentences.`
+  );
 }
 
-async function recommendDoctorsWithGemini(disease, urgency, userLocation) {
-  const locationText = userLocation 
-    ? `User location: ${userLocation.lat}, ${userLocation.lng}. `
-    : '';
-  
-  const prompt = `${locationText}Recommend 3 doctors for treating ${disease} with ${urgency} urgency level. 
-For each doctor, provide: name, specialty, location (city/state), and rating (1-5).
-Format as JSON array with fields: name, specialty, location, rating.`;
+// Resolve conflict between ML and Gemini disease
+async function resolveConflict(symptoms, mlDisease, geminiDisease) {
+  return callGemini(
+    `Symptoms: ${symptoms.join(', ')}
+Disease 1: ${mlDisease}
+Disease 2: ${geminiDisease}
+Which disease is more medically probable?
 
-  try {
-    const response = await analyzeWithGemini(prompt);
-    // Try to parse JSON from response
-    const jsonMatch = response.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    }
-    
-    // Fallback: return empty array
-    return [];
-  } catch (error) {
-    console.error('Error parsing Gemini doctor recommendations:', error);
-    return [];
-  }
+Return ONLY the disease name in plain text. NO markdown, NO asterisks, NO symbols, just the disease name.`
+  );
+}
+
+// Generate follow-up questions for urgency
+async function generateFollowUpQuestions(symptoms, disease) {
+  const questions = await callGemini(
+    `Based on disease ${disease} and symptoms ${symptoms.join(', ')}, ask 3 short follow-up questions to assess severity.
+
+Return each question as a plain sentence separated by newline. NO markdown, NO asterisks, NO symbols, just clear questions.`
+  );
+
+  return questions ? questions.split('\n').map(q => q.trim()).filter(q => q) : [];
+}
+
+// Determine urgency as natural sentence
+async function determineUrgency(symptoms, disease, answers = []) {
+  const prompt = `
+Given the following symptoms: ${symptoms.join(', ')}
+Disease: ${disease}
+User answers to follow-up questions: ${answers.join(', ')}
+
+Return a single sentence describing the urgency of treatment. Example: "You should seek urgent medical attention immediately."
+
+CRITICAL: Use ONLY plain text. NO markdown, NO asterisks, NO symbols. Plain sentence only, not just "low" or "medium".
+`;
+  return callGemini(prompt);
 }
 
 module.exports = {
+  callGemini,
   analyzeWithGemini,
   analyzeImageWithGemini,
-  chatWithGemini,
-  determineUrgency,
-  recommendDoctorsWithGemini
+  predictDiseaseWithGemini,
+  getDiseaseDetails,
+  resolveConflict,
+  generateFollowUpQuestions,
+  determineUrgency
 };
-
