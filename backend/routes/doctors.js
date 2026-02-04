@@ -43,10 +43,6 @@ Return ONLY a valid JSON array with this exact structure (list nearest doctors f
       "state": "State name",
       "lat": latitude_as_number,
       "lng": longitude_as_number
-    },
-    "contact": {
-      "phone": "Phone number if available",
-      "email": "Email if available"
     }
   }
 ]
@@ -82,10 +78,6 @@ CRITICAL: Use ONLY plain text. NO markdown, NO asterisks, NO symbols. Return val
       "state": "राज्य का नाम",
       "lat": अक्षांश_संख्या_के_रूप में,
       "lng": देशांतर_संख्या_के_रूप में
-    },
-    "contact": {
-      "phone": "फोन नंबर यदि उपलब्ध हो",
-      "email": "ईमेल यदि उपलब्ध हो"
     }
   }
 ]
@@ -122,10 +114,6 @@ CRITICAL: Use ONLY plain text. NO markdown, NO asterisks, NO symbols. Return val
       "state": "రాష్ట్రం పేరు",
       "lat": అక్షాంశం_సంఖ్య_గా,
       "lng": రేఖాంశం_సంఖ్య_గా
-    },
-    "contact": {
-      "phone": "ఫోన్ నంబర్ ఉంటే",
-      "email": "ఇమెయిల్ ఉంటే"
     }
   }
 ]
@@ -306,11 +294,7 @@ router.post('/recommend', async (req, res) => {
         state: doc.location?.state || '',
         lat: doc.location?.lat || null,
         lng: doc.location?.lng || null
-      },
-      contact: {
-        phone: doc.contact?.phone || 'Not available',
-        email: doc.contact?.email || 'Not available'
-      },
+      },    
       distance: doc.distance || null,
       rating: doc.rating || null,
       experience: doc.experience || null,
