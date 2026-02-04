@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { getTranslation } from '../utils/translations';
 import './ChatHistory.css';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://healthsphereai-backend.onrender.com';
 
 const ChatHistory = ({ onClose }) => {
   const { user } = useAuth();
