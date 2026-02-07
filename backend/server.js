@@ -8,13 +8,15 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors(
-  {
-    origin: ["https://healthsphereai-backend.onrender.com",
-      "http://localhost:3000"],
-      credentials: true
-  }
-));
+app.use(cors({
+  origin: 'https://healthsphereai.onrender.com',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
+
+// VERY IMPORTANT
+app.options('*', cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use('/uploads', express.static('uploads'));
