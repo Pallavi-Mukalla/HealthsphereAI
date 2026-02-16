@@ -117,9 +117,14 @@ const Chatbot = () => {
         doctorInfo += `\n   ${t('distance')}: ${doctor.distance}`;
       }
   
-      if (doctor.address) {
-        doctorInfo += `\n   ${t('location')}: ${doctor.address}`;
-      }
+      const address =
+  doctor.location?.address ||
+  `${doctor.location?.city || ''}${doctor.location?.city && doctor.location?.state ? ', ' : ''}${doctor.location?.state || ''}`;
+
+if (address && address.trim() !== '') {
+  doctorInfo += `\n   ${t('location')}: ${address}`;
+}
+
   
       addMessage(doctorInfo);
   
