@@ -103,40 +103,26 @@ const Chatbot = () => {
   // --- Display Doctor Recommendations ---
   const displayDoctorRecommendations = (doctors) => {
     if (!doctors || doctors.length === 0) return;
-
+  
     addMessage(`🏥 ${t('recommendedDoctors')}:`);
-    
+  
     doctors.forEach((doctor, index) => {
+      // 1. Format the main text info
       let doctorInfo = `\n${index + 1}. ${doctor.name}`;
       doctorInfo += `\n   ${t('specialty')}: ${doctor.specialty}`;
       doctorInfo += `\n   ${t('hospitalClinic')}: ${doctor.hospital || t('notSpecified')}`;
       
-      if (doctor.location) {
-        const address = [doctor.location.address, doctor.location.city, doctor.location.state]
-          .filter(Boolean).join(', ');
-        if (address) {
-          doctorInfo += `\n   ${t('location')}: ${address}`;
-        }
+      // Use the backend-calculated distance string (e.g., "1.2 km")
+      if (doctor.distance) {
+        doctorInfo += `\n   ${t('distance')}: ${doctor.distance}`;
       }
-      
-      if (doctor.distance !== null && doctor.distance !== undefined) {
-        doctorInfo += `\n   ${t('distance')}: ${doctor.distance.toFixed(1)} km`;
+  
+      if (doctor.address) {
+        doctorInfo += `\n   ${t('location')}: ${doctor.address}`;
       }
-      
-      if (doctor.contact && doctor.contact.phone && doctor.contact.phone !== 'Not available') {
-        doctorInfo += `\n   ${t('phone')}: ${doctor.contact.phone}`;
-      }
-
+  
       addMessage(doctorInfo);
-
-      // Add directions link if location available
-      if (userLocation && doctor.location && (doctor.location.lat && doctor.location.lng)) {
-        const directionsUrl = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${doctor.location.lat},${doctor.location.lng}`;
-        addMessage(`   📍 ${t('getDirections')}: ${directionsUrl}`);
-      } else if (userLocation && doctor.location && doctor.location.address) {
-        const directionsUrl = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${encodeURIComponent(doctor.location.address)}`;
-        addMessage(`   📍 ${t('getDirections')}: ${directionsUrl}`);
-      }
+  
     });
   };
 
@@ -357,34 +343,13 @@ const Chatbot = () => {
         {messages.map((msg, idx) => (
           <div key={idx} className={`message ${msg.type}`}>
             <div className="message-content">
-              {String(msg.text).split('\n').map((line, i) => {
-                // Check if line contains a URL
-                const urlRegex = /(https?:\/\/[^\s]+)/g;
-                const parts = line.split(urlRegex);
-                
-                return (
-                  <React.Fragment key={i}>
-                    {parts.map((part, j) => {
-                      if (urlRegex.test(part)) {
-                        return (
-                          <a 
-                            key={j} 
-                            href={part} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            style={{ color: '#4CAF50', textDecoration: 'underline' }}
-                          >
-                            {t('getDirections')}
-                          </a>
-                        );
-                      }
-                      return <span key={j}>{part}</span>;
-                    })}
-                    {i < msg.text.split('\n').length - 1 && <br />}
-                  </React.Fragment>
-                );
-              })}
-            </div>
+            {String(msg.text).split('\n').map((line, i) => (
+  <React.Fragment key={i}>
+    {line}
+    {i < msg.text.split('\n').length - 1 && <br />}
+  </React.Fragment>
+))}
+</div>
           </div>
         ))}
         {isProcessing && (
