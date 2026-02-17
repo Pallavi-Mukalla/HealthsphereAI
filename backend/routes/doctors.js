@@ -137,153 +137,168 @@ router.post('/recommend', async (req, res) => {
   try {
     let doctors = [];
 
-    // Step 1: Search MongoDB doctorslist collection with two-tier proximity
-    if (userLocation && userLocation.lat && userLocation.lng) {
-      // Find doctors matching disease specialty
-      // Note: Disease name might be in any language, so we search more broadly
+    const hasLocation =
+      userLocation &&
+      userLocation.lat !== undefined &&
+      userLocation.lng !== undefined;
+
+    const userLat = hasLocation ? Number(userLocation.lat) : null;
+    const userLng = hasLocation ? Number(userLocation.lng) : null;
+
+    // ===============================
+    // STEP 1: SEARCH DATABASE
+    // ===============================
+    if (hasLocation && !isNaN(userLat) && !isNaN(userLng)) {
       let allDoctors = await Doctor.find({
         $or: [
           { specialty: new RegExp(disease, 'i') },
           { specialties: { $in: [new RegExp(disease, 'i')] } }
         ]
       });
-      
-      // If no doctors found, try searching without language-specific matching
-      // This helps when disease name is in Hindi/Telugu but database has English specialties
+
       if (!allDoctors || allDoctors.length === 0) {
-        console.log(`No doctors found for disease "${disease}", trying broader search...`);
-        // Search for common medical specialties that might match
-        allDoctors = await Doctor.find({}).limit(20); // Get more doctors for distance filtering
+        console.log(`No doctors found for "${disease}", trying broader search`);
+        allDoctors = await Doctor.find({}).limit(20);
       }
 
-      // Calculate distance for all doctors
       const doctorsWithDistance = allDoctors
         .map(doc => {
-          if (!doc.location || !doc.location.lat || !doc.location.lng) {
-            return null;
-          }
+          if (!doc.location?.lat || !doc.location?.lng) return null;
+
+          const hospitalLat = Number(doc.location.lat);
+          const hospitalLng = Number(doc.location.lng);
+
+          if (isNaN(hospitalLat) || isNaN(hospitalLng)) return null;
+
           const distance = getDistanceFromLatLonInKm(
-            userLocation.lat,
-            userLocation.lng,
-            doc.location.lat,
-            doc.location.lng
+            userLat,
+            userLng,
+            hospitalLat,
+            hospitalLng
           );
-          return { ...doc.toObject(), distance };
+
+          return {
+            ...doc.toObject(),
+            distance: parseFloat(distance.toFixed(2))
+          };
         })
-        .filter(doc => doc !== null)
+        .filter(Boolean)
         .sort((a, b) => a.distance - b.distance);
 
-      // Tier 1: First search in 1-7 km range
-      doctors = doctorsWithDistance.filter(doc => doc.distance >= 1 && doc.distance <= 7);
-      
-      // Tier 2: If no doctors in 1-7 km, search in 10-15 km range
-      if (!doctors || doctors.length === 0) {
-        console.log('No doctors found in 1-7 km range, searching 10-15 km range');
-        doctors = doctorsWithDistance.filter(doc => doc.distance >= 10 && doc.distance <= 15);
-      } else {
-        console.log(`Found ${doctors.length} doctor(s) in 1-7 km range`);
+      // Tier 1: 1-7 km
+      doctors = doctorsWithDistance.filter(
+        doc => doc.distance >= 1 && doc.distance <= 7
+      );
+
+      // Tier 2: 10-15 km
+      if (!doctors.length) {
+        console.log('No doctors in 1-7 km, checking 10-15 km');
+        doctors = doctorsWithDistance.filter(
+          doc => doc.distance >= 10 && doc.distance <= 15
+        );
       }
     } else {
-      // If no location, just find by specialty
-      let foundDoctors = await Doctor.find({
+      // No location
+      doctors = await Doctor.find({
         $or: [
           { specialty: new RegExp(disease, 'i') },
           { specialties: { $in: [new RegExp(disease, 'i')] } }
         ]
       }).limit(5);
-      
-      // If no doctors found, get some general doctors
-      if (!foundDoctors || foundDoctors.length === 0) {
-        console.log(`No doctors found for disease "${disease}" without location, getting general doctors...`);
-        foundDoctors = await Doctor.find({}).limit(5);
+
+      if (!doctors.length) {
+        doctors = await Doctor.find({}).limit(5);
       }
-      
-      doctors = foundDoctors;
     }
 
-    // Step 2: If no doctors found in DB within proximity, use Gemini
-    if (!doctors || doctors.length === 0) {
-      console.log('No doctors found in database within 1-7 km or 10-15 km range, using Gemini recommendation');
-      
-      // Get user language preference
-      const userLanguage = userId ? await getUserLanguage(userId) : 'en';
-      
-      // Request doctors only in 1-7 km range from Gemini, prioritizing nearest ones
-      const searchRange = userLocation && userLocation.lat && userLocation.lng
-        ? ` near coordinates ${userLocation.lat}, ${userLocation.lng} within 1-7 kilometers ONLY`
-        : '';
+    // ===============================
+    // STEP 2: USE GEMINI IF DB FAILS
+    // ===============================
+    if (!doctors.length) {
+      console.log('Using Gemini recommendations');
+
+      const userLanguage = userId
+        ? await getUserLanguage(userId)
+        : 'en';
+
+      const searchRange =
+        hasLocation && !isNaN(userLat) && !isNaN(userLng)
+          ? ` near coordinates ${userLat}, ${userLng} within 1-7 kilometers ONLY`
+          : '';
 
       const prompt = getDoctorPrompt(disease, searchRange, userLanguage);
-
       const aiText = await callGemini(prompt);
 
       if (aiText) {
         try {
-          // Try to parse JSON response
-          let parsed = aiText.trim();
-          // Remove markdown code blocks if present
-          parsed = parsed.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-          
+          let parsed = aiText.trim()
+            .replace(/```json\n?/g, '')
+            .replace(/```\n?/g, '')
+            .trim();
+
           doctors = JSON.parse(parsed);
-          
-          // Filter Gemini suggestions by 1-7 km proximity only if user location provided
-          if (userLocation && userLocation.lat && userLocation.lng && Array.isArray(doctors)) {
-            // If Gemini provided doctors with coordinates, calculate distance and filter to 1-7 km only
+
+          if (hasLocation && Array.isArray(doctors)) {
             doctors = doctors
               .map(doc => {
-                // Try to get coordinates from location if available
-                if (doc.location && doc.location.lat && doc.location.lng) {
-                  const distance = getDistanceFromLatLonInKm(
-                    userLocation.lat,
-                    userLocation.lng,
-                    doc.location.lat,
-                    doc.location.lng
-                  );
-                  return { ...doc, distance, source: 'gemini_suggestion' };
+                if (!doc.location?.lat || !doc.location?.lng) {
+                  return null;
                 }
-                // If no coordinates, mark as suggested but can't verify distance
-                return { ...doc, distance: null, source: 'gemini_suggestion' };
+
+                const hospitalLat = Number(doc.location.lat);
+                const hospitalLng = Number(doc.location.lng);
+
+                if (isNaN(hospitalLat) || isNaN(hospitalLng)) {
+                  return null;
+                }
+
+                const distance = getDistanceFromLatLonInKm(
+                  userLat,
+                  userLng,
+                  hospitalLat,
+                  hospitalLng
+                );
+
+                return {
+                  ...doc,
+                  location: {
+                    ...doc.location,
+                    lat: hospitalLat,
+                    lng: hospitalLng
+                  },
+                  distance: parseFloat(distance.toFixed(2)),
+                  source: 'gemini_suggestion'
+                };
               })
-              .filter(doc => {
-                // Filter strictly by 1-7 km range if distance is available
-                if (doc.distance !== null) {
-                  return doc.distance >= 1 && doc.distance <= 7;
-                }
-                // If no distance available, include it (Gemini should have followed proximity requirement)
-                return true;
-              })
-              .sort((a, b) => {
-                // Sort by distance if available, otherwise keep original order
-                if (a.distance !== null && b.distance !== null) {
-                  return a.distance - b.distance;
-                }
-                return 0;
-              });
+              .filter(
+                doc =>
+                  doc &&
+                  doc.distance >= 1 &&
+                  doc.distance <= 7
+              )
+              .sort((a, b) => a.distance - b.distance);
           } else {
-            // No location, just mark as Gemini suggestions
             doctors = doctors.map(doc => ({
               ...doc,
               distance: null,
               source: 'gemini_suggestion'
             }));
           }
-        } catch (parseErr) {
-          console.error('Failed to parse Gemini doctor recommendation:', parseErr);
-          console.error('Raw response:', aiText);
-          console.error('Parse error details:', parseErr);
-          // Fallback: return empty array
+        } catch (err) {
+          console.error('Gemini parse error:', err);
           doctors = [];
         }
       }
     } else {
-      // Mark database doctors
       doctors = doctors.map(doc => ({
         ...doc,
         source: 'database'
       }));
     }
 
-    // Format response
+    // ===============================
+    // STEP 3: FORMAT RESPONSE
+    // ===============================
     const formattedDoctors = doctors.slice(0, 3).map(doc => ({
       name: doc.name || 'Unknown',
       specialty: doc.specialty || disease,
@@ -292,22 +307,25 @@ router.post('/recommend', async (req, res) => {
         address: doc.location?.address || 'Address not available',
         city: doc.location?.city || '',
         state: doc.location?.state || '',
-        lat: doc.location?.lat || null,
-        lng: doc.location?.lng || null
-      },    
-      distance: doc.distance || null,
+        lat: doc.location?.lat ?? null,
+        lng: doc.location?.lng ?? null
+      },
       rating: doc.rating || null,
       experience: doc.experience || null,
       source: doc.source || 'unknown'
     }));
 
-    console.log(`Returning ${formattedDoctors.length} doctor(s) for disease: ${disease}`);
+    console.log(
+      `Returning ${formattedDoctors.length} doctor(s) for ${disease}`
+    );
+
     res.json({ doctors: formattedDoctors });
 
   } catch (err) {
     console.error('Doctor recommendation error:', err);
-    console.error('Error stack:', err.stack);
-    res.status(500).json({ error: 'Error fetching doctors: ' + err.message });
+    res.status(500).json({
+      error: 'Error fetching doctors: ' + err.message
+    });
   }
 });
 

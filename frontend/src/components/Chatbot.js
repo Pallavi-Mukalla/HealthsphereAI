@@ -325,18 +325,7 @@ if (address && address.trim() !== '') {
     if (followUpQuestions.length > 0) {
       handleFollowUpAnswer(input.trim());
     } else {
-      // Check if input looks like a symptom (contains medical keywords) or a general question
-      const medicalKeywords = ['pain', 'fever', 'headache', 'symptom', 'disease', 'sick', 'ache', 'hurt', 'cough', 'nausea', 'vomit', 'rash', 'swelling'];
-      const isMedicalQuery = medicalKeywords.some(keyword => 
-        input.toLowerCase().includes(keyword)
-      );
-      
-      if (isMedicalQuery) {
-        handleTextSubmit(input.trim());
-      } else {
-        // General chat question
-        handleChatQuestion(input.trim());
-      }
+      handleTextSubmit(input.trim());
     }
 
     setInput('');
