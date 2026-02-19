@@ -101,7 +101,8 @@ const callMLModel = (symptoms) => {
       try {
         const data = JSON.parse(stdout);
         console.log('ML model output:', data);
-        resolve(data?.disease || null);
+        resolve(data?.prediction || null);
+
       } catch {
         resolve(null);
       }

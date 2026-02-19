@@ -1,8 +1,7 @@
-# ml_service/diseasePredictor.py
-
 import sys
 import json
-import pickle
+import joblib
+import pandas as pd
 import numpy as np
 import os
 
@@ -10,76 +9,84 @@ import os
 # Paths
 # -----------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "disease_model.pkl")
-MAPPING_PATH = os.path.join(BASE_DIR, "models", "symptom_mapping.json")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "stacked_disease_model_v2.pkl")  # your locally saved model
 
 # -----------------------------
-# Main Function
+# Load Model
 # -----------------------------
-def main():
-    try:
-        # Load Model & Mapping
-        with open(MODEL_PATH, "rb") as f:
-            model = pickle.load(f)
+try:
+    saved_model = joblib.load(MODEL_PATH)
 
-        with open(MAPPING_PATH, "r") as f:
-            symptom_mapping = json.load(f)
+    extra_model = saved_model.get("extra_model")
+    xgb_model = saved_model.get("xgb_model")
+    meta_model = saved_model.get("meta_model")
+    label_encoder = saved_model.get("label_encoder")
 
-    except Exception as e:
-        print(json.dumps({"error": f"Failed to load model or mapping: {str(e)}"}))
-        sys.exit(1)
+    # Make sure all models exist
+    if not all([extra_model, xgb_model, meta_model, label_encoder]):
+        raise ValueError("One or more models are missing in the saved file.")
 
-    try:
-        # Read Symptoms from CLI (JSON string)
-        input_symptoms = json.loads(sys.argv[1])
+except Exception as e:
+    print(json.dumps({"error": f"Model loading failed: {str(e)}"}))
+    sys.exit(1)
 
-        if not isinstance(input_symptoms, list):
-            raise ValueError("Symptoms must be provided as a list.")
+# -----------------------------
+# Get Input Symptoms
+# -----------------------------
+try:
+    input_symptoms = json.loads(sys.argv[1])
+    if not isinstance(input_symptoms, list):
+        raise ValueError("Input must be a list of symptoms")
+except Exception as e:
+    print(json.dumps({"error": f"Invalid input: {str(e)}"}))
+    sys.exit(1)
 
-        # Normalize symptoms
-        input_symptoms = [s.lower().strip() for s in input_symptoms]
+# -----------------------------
+# Normalize Input
+# -----------------------------
+input_symptoms = [s.lower().strip().replace(" ", "_") for s in input_symptoms]
 
-    except Exception as e:
-        print(json.dumps({"error": f"Invalid input: {str(e)}"}))
-        sys.exit(1)
-
-    # -----------------------------
-    # Create Feature Vector
-    # -----------------------------
-    num_features = len(symptom_mapping)
-    X = np.zeros((1, num_features), dtype=int)
+# -----------------------------
+# Create Feature Vector
+# -----------------------------
+try:
+    all_features = extra_model.feature_names_in_  # get feature names from ExtraTrees
+    feature_dict = {f: 0 for f in all_features}
 
     matched_symptoms = []
     for symptom in input_symptoms:
-        if symptom in symptom_mapping:
-            idx = symptom_mapping[symptom]
-            X[0, idx] = 1
+        if symptom in feature_dict:
+            feature_dict[symptom] = 1
             matched_symptoms.append(symptom)
 
     if not matched_symptoms:
-        print(json.dumps({"error": "None of the input symptoms are recognized."}))
-        sys.exit(1)
+        raise ValueError("None of the input symptoms are recognized")
 
-    # -----------------------------
-    # Predict Disease
-    # -----------------------------
-    try:
-        if hasattr(model, "predict_proba"):
-            # If model supports probabilities
-            probs = model.predict_proba(X)[0]
-            top_idx = np.argmax(probs)
-            disease = model.classes_[top_idx]
-            confidence = float(probs[top_idx])
-            print(json.dumps({"disease": disease, "confidence": confidence}))
-        else:
-            # Default prediction
-            disease = model.predict(X)[0]
-            print(json.dumps({"disease": disease}))
+    input_df = pd.DataFrame([feature_dict])
+    input_selected = input_df.reindex(columns=all_features, fill_value=0)
 
-    except Exception as e:
-        print(json.dumps({"error": f"Prediction failed: {str(e)}"}))
-        sys.exit(1)
+except Exception as e:
+    print(json.dumps({"error": f"Feature processing failed: {str(e)}"}))
+    sys.exit(1)
 
+# -----------------------------
+# Predict Disease
+# -----------------------------
+try:
+    extra_pred = extra_model.predict_proba(input_selected)
+    xgb_pred = xgb_model.predict_proba(input_selected)
 
-if __name__ == "__main__":
-    main()
+    # Combine predictions for meta model
+    stack_input = np.hstack((extra_pred, xgb_pred))
+    final_pred = meta_model.predict(stack_input)
+
+    predicted_label = label_encoder.inverse_transform(final_pred)[0]
+
+    print(json.dumps({
+        "prediction": predicted_label,
+        "matched_symptoms": matched_symptoms
+    }))
+
+except Exception as e:
+    print(json.dumps({"error": f"Prediction failed: {str(e)}"}))
+    sys.exit(1)
