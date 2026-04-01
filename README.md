@@ -29,7 +29,6 @@ An intelligent health assistant application that analyzes symptoms, predicts dis
 ## 📚 Documentation
 
 - **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Complete setup instructions for collaborators
-- **[PROJECT_DOCUMENTATION.md](./PROJECT_DOCUMENTATION.md)** - Detailed project documentation
 
 ## 🛠️ Technology Stack
 
@@ -51,7 +50,3 @@ An intelligent health assistant application that analyzes symptoms, predicts dis
 ## ⚠️ Disclaimer
 
 This application is for informational purposes only and does not provide medical diagnosis, treatment, or advice. Always consult qualified healthcare professionals for medical concerns.
-
-## 📝 License
-
-[Specify your license here]
